@@ -52,28 +52,6 @@ This tool converts text into IPA (International Phonetic Alphabet) transcription
 
 ---
 
-## 🔧 Features & Tools
-
-### **Text Processing**
-- ✅ **Smart Word Detection**: Automatically identifies word boundaries
-- ✅ **Punctuation Handling**: Preserves punctuation and formatting
-- ✅ **Mixed Language Support**: Handles multilingual text
-- ✅ **Special Characters**: Processes numbers, abbreviations, etc.
-
-### **IPA Output Options**
-- 📝 **Standard IPA**: Traditional International Phonetic Alphabet
-- 🎯 **HCE Enhanced**: Harmonized Consonant Enhancement system
-- 📊 **Detailed Analysis**: Word-by-word breakdown with confidence scores
-- 📋 **Clean Copy**: Simple IPA output for easy copying
-
-### **Export & Sharing**
-- 💾 **Multiple Formats**: Plain text, CSV, JSON
-- 📊 **Analysis Reports**: Detailed statistics and metrics
-- 🔗 **Shareable Links**: Save and share your transcriptions
-- 📋 **Copy to Clipboard**: One-click copying
-
----
-
 ## 🎓 How to Read IPA Symbols
 
 ### Common IPA Symbols

@@ -7,6 +7,12 @@ from overrides import update_override_dict
 import time
 import pandas as pd
 
+# App Title
+st.title("🧪 Markdown Display Debug")
+
+# Show current working directory
+st.write("**Current Working Directory:**", os.getcwd())
+
 # Check if the file exists
 if os.path.exists("user_guide.md"):
     st.success("✅ `user_guide.md` found!")
@@ -377,6 +383,49 @@ with st.sidebar:
         confidence_rate = round((stats["high_confidence_words"] / stats["total_interactions"]) * 100, 1)
         st.metric("High Confidence Rate", f"{confidence_rate}%")
     
+    # Google Sheets status and controls
+    if SHEETS_AVAILABLE:
+        st.markdown("---")
+        st.markdown("### 📊 Google Sheets Integration")
+        
+        if st.session_state.get('sheets_connected', False):
+            st.success("✅ Connected to Google Sheets")
+            
+            # Dashboard toggle
+            if st.toggle("Show Learning Dashboard", key="show_dashboard"):
+                try:
+                    dashboard_data = st.session_state.sheets_history.get_learning_dashboard_data(days=30)
+                    if dashboard_data:
+                        st.markdown("**Recent Activity (30 days):**")
+                        summary = dashboard_data.get('summary', {})
+                        
+                        if summary:
+                            st.metric("Total Cloud Interactions", summary.get('total_interactions', 0))
+                            st.metric("Cloud Unique Words", summary.get('unique_words', 0))
+                            
+                            confidence_rate = summary.get('high_confidence_rate', 0) * 100
+                            st.metric("Cloud Confidence Rate", f"{confidence_rate:.1f}%")
+                except Exception as e:
+                    st.error(f"Dashboard error: {str(e)}")
+            
+            # Export options
+            if st.button("📥 Export Learning Report", use_container_width=True):
+                try:
+                    report = st.session_state.sheets_history.export_learning_report('json')
+                    st.download_button(
+                        "Download JSON Report",
+                        report,
+                        file_name=f"hce_learning_report_{datetime.now().strftime('%Y%m%d')}.json",
+                        mime="application/json"
+                    )
+                except Exception as e:
+                    st.error(f"Export failed: {str(e)}")
+        else:
+            st.error("❌ Google Sheets not connected")
+            st.info("Add your Google service account credentials to connect")
+    else:
+        st.warning("📦 Install Google Sheets packages for cloud sync")
+    
     # Recent activity from local logs
     st.markdown("---")
     st.markdown("### 📈 Recent Local Activity")
@@ -402,6 +451,151 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Error reading recent activity: {str(e)}")
 
+# Google Sheets Dashboard (if enabled and connected)
+if (SHEETS_AVAILABLE and 
+    st.session_state.get('sheets_connected', False) and 
+    st.session_state.get('show_dashboard', False)):
+    
+    st.markdown("---")
+    st.markdown("## 📊 Learning Analytics Dashboard")
+    
+    try:
+        dashboard_data = st.session_state.sheets_history.get_learning_dashboard_data(days=30)
+        if dashboard_data:
+            create_learning_visualizations(dashboard_data)
+            
+            # Detailed analytics
+            with st.expander("📋 Detailed Analytics"):
+                
+                # Word learning patterns
+                if dashboard_data.get('word_learning'):
+                    word_df = pd.DataFrame(dashboard_data['word_learning'])
+                    
+                    st.markdown("**Most Practiced Words:**")
+                    word_counts = word_df['word'].value_counts().head(10)
+                    for word, count in word_counts.items():
+                        avg_confidence = word_df[word_df['word'] == word]['confidence'].mean()
+                        st.text(f"{word}: {count} practices (avg confidence: {avg_confidence:.2f})")
+                
+                # Learning velocity trends
+                if dashboard_data.get('daily_analytics'):
+                    analytics_df = pd.DataFrame(dashboard_data['daily_analytics'])
+                    st.markdown("**Learning Velocity Trends:**")
+                    
+                    avg_velocity = analytics_df['learning_velocity'].mean()
+                    max_velocity = analytics_df['learning_velocity'].max()
+                    
+                    st.metric("Average Learning Velocity", f"{avg_velocity:.2f} words/session")
+                    st.metric("Peak Learning Velocity", f"{max_velocity:.2f} words/session")
+                
+                # Error patterns analysis
+                if dashboard_data.get('word_learning'):
+                    st.markdown("**Learning Progress Analysis:**")
+                    
+                    # Words that needed multiple corrections
+                    word_attempts = word_df.groupby('word').agg({
+                        'confidence': ['mean', 'count'],
+                        'interaction_type': lambda x: (x == 'manual_correction').sum()
+                    }).round(2)
+                    
+                    problematic_words = word_attempts[
+                        (word_attempts[('confidence', 'count')] > 2) & 
+                        (word_attempts[('confidence', 'mean')] < 0.7)
+                    ]
+                    
+                    if not problematic_words.empty:
+                        st.markdown("**Words needing more practice:**")
+                        for word in problematic_words.index[:5]:
+                            attempts = word_attempts.loc[word, ('confidence', 'count')]
+                            avg_conf = word_attempts.loc[word, ('confidence', 'mean')]
+                            corrections = word_attempts.loc[word, ('interaction_type', '<lambda>')]
+                            st.text(f"📚 {word}: {attempts} attempts, {avg_conf:.2f} confidence, {corrections} corrections")
+        
+    except Exception as e:
+        st.error(f"Dashboard error: {str(e)}")
+
+# Advanced features section
+with st.expander("🚀 Advanced Features"):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Batch Learning:**")
+        if st.button("🎯 Quick Train Mode", use_container_width=True):
+            st.info("Enter multiple sentences separated by new lines for batch processing")
+            
+        st.markdown("**Data Management:**")
+        if st.button("🔄 Sync Local to Sheets", use_container_width=True):
+            if SHEETS_AVAILABLE and st.session_state.get('sheets_connected', False):
+                try:
+                    # Sync local learning data to Google Sheets
+                    if os.path.exists(AUTO_LEARN_FILE):
+                        with open(AUTO_LEARN_FILE, "r", encoding='utf-8') as f:
+                            for line in f:
+                                entry = json.loads(line)
+                                # Mock word_data for sync
+                                word_data = {
+                                    'clean': entry['word'],
+                                    'original': entry.get('original_word', entry['word'])
+                                }
+                                st.session_state.sheets_history.log_word_learning(
+                                    word_data, entry['ipa_choice'], 
+                                    entry['interaction_type'], entry['confidence'],
+                                    entry['selection_count'], 
+                                    entry.get('session_id', 'sync_' + datetime.now().strftime("%Y%m%d"))
+                                )
+                        st.success("✅ Local data synced to Google Sheets!")
+                except Exception as e:
+                    st.error(f"Sync failed: {str(e)}")
+            else:
+                st.error("Google Sheets not connected")
+    
+    with col2:
+        st.markdown("**Learning Insights:**")
+        if st.button("🧮 Analyze Patterns", use_container_width=True):
+            # Analyze learning patterns from local data
+            if os.path.exists(AUTO_LEARN_FILE):
+                try:
+                    with open(AUTO_LEARN_FILE, "r", encoding='utf-8') as f:
+                        entries = [json.loads(line) for line in f]
+                    
+                    if entries:
+                        # Learning speed analysis
+                        manual_corrections = [e for e in entries if e['interaction_type'] == 'manual_correction']
+                        selection_learning = [e for e in entries if e['interaction_type'] == 'selection']
+                        
+                        st.info(f"""
+                        **Learning Pattern Analysis:**
+                        - Manual corrections: {len(manual_corrections)} ({len(manual_corrections)/len(entries)*100:.1f}%)
+                        - Selection learning: {len(selection_learning)} ({len(selection_learning)/len(entries)*100:.1f}%)
+                        - Average confidence: {sum(e['confidence'] for e in entries)/len(entries):.2f}
+                        """)
+                except Exception as e:
+                    st.error(f"Analysis failed: {str(e)}")
+        
+        st.markdown("**Export Options:**")
+        if st.button("📊 Generate Report", use_container_width=True):
+            # Generate comprehensive learning report
+            report_data = {
+                "generated_at": datetime.now().isoformat(),
+                "session_id": st.session_state.get('session_id', 'unknown'),
+                "local_stats": get_enhanced_learning_stats(),
+                "learning_summary": "Comprehensive HCE IPA learning report"
+            }
+            
+            if SHEETS_AVAILABLE and st.session_state.get('sheets_connected', False):
+                try:
+                    cloud_data = st.session_state.sheets_history.get_learning_dashboard_data(days=90)
+                    report_data["cloud_stats"] = cloud_data.get('summary', {})
+                except:
+                    pass
+            
+            st.download_button(
+                "📥 Download Full Report",
+                json.dumps(report_data, indent=2, ensure_ascii=False),
+                file_name=f"hce_comprehensive_report_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                mime="application/json"
+            )
+
 # Quick test examples (keeping your original)
 with st.expander("🧪 Quick Test Examples - Try These to Build Learning Data"):
     examples = [
@@ -417,6 +611,77 @@ with st.expander("🧪 Quick Test Examples - Try These to Build Learning Data"):
                 st.session_state.current_text = example
                 st.session_state.word_results = process_text(example)
                 st.rerun()
+
+# Setup instructions
+with st.expander("⚙️ Google Sheets Setup Instructions"):
+    st.markdown("""
+    ### Setting up Google Sheets Integration:
+    
+    **Method 1: Using Streamlit Secrets (Recommended for deployment)**
+    1. Create a Google Cloud Project and enable the Google Sheets API
+    2. Create a Service Account and download the JSON credentials
+    3. Add the credentials to your Streamlit secrets:
+    ```toml
+    # .streamlit/secrets.toml
+    [gcp_service_account]
+    type = "service_account"
+    project_id = "your-project-id"
+    private_key_id = "your-private-key-id"
+    private_key = "-----BEGIN PRIVATE KEY-----\\nYOUR-PRIVATE-KEY\\n-----END PRIVATE KEY-----\\n"
+    client_email = "your-service-account@your-project.iam.gserviceaccount.com"
+    client_id = "your-client-id"
+    auth_uri = "https://accounts.google.com/o/oauth2/auth"
+    token_uri = "https://oauth2.googleapis.com/token"
+    ```
+    
+    **Method 2: Using Local Credentials File**
+    1. Download your service account JSON file
+    2. Place it in your project directory
+    3. The app will automatically detect and use it
+    
+    **Required Packages:**
+    ```
+    pip install gspread google-auth google-auth-oauthlib google-auth-httplib2 pandas plotly
+    ```
+    
+    **Spreadsheet Permissions:**
+    - Share your Google Spreadsheet with the service account email
+    - Give it "Editor" permissions
+    """)
+
+# Help section (enhanced)
+with st.expander("ℹ️ Enhanced Auto-Learning Features"):
+    st.markdown("""
+    **🤖 Enhanced Automatic Learning:**
+    
+    1. **Multi-Platform Logging**: 
+       - Local JSON files for immediate access
+       - Google Sheets for cloud storage and analytics
+       - Real-time synchronization between platforms
+    
+    2. **Advanced Analytics**: 
+       - Learning velocity tracking
+       - Confidence progression over time
+       - Error pattern analysis
+       - Session-based performance metrics
+    
+    3. **Intelligent Learning**:
+       - Context-aware confidence scoring
+       - Interaction type weighting (manual corrections get higher confidence)
+       - Automatic pattern recognition for problematic words
+    
+    4. **Comprehensive Reporting**:
+       - Interactive visualizations
+       - Exportable learning reports
+       - Progress tracking over time
+       - Performance optimization insights
+    
+    **💡 Pro Tips:**
+    - Connect Google Sheets for persistent learning across sessions
+    - Use the dashboard to identify words that need more practice
+    - Export reports to track long-term learning progress
+    - The system learns your Australian English pronunciation preferences over time
+    """)
 
 # Footer with session info
 st.markdown("---")
