@@ -7,6 +7,26 @@ from overrides import update_override_dict
 import time
 import pandas as pd
 
+# App Title
+st.title("🧪 Markdown Display Debug")
+
+# Show current working directory
+st.write("**Current Working Directory:**", os.getcwd())
+
+# Check if the file exists
+if os.path.exists("user_guide.md"):
+    st.success("✅ `user_guide.md` found!")
+
+    with open("user_guide.md", "r", encoding="utf-8") as f:
+        markdown_text = f.read()
+
+    with st.expander("📘 How to Use This App", expanded=False):
+        st.markdown(markdown_text, unsafe_allow_html=True)
+
+else:
+    st.error("❌ `user_guide.md` not found.")
+    st.info("Make sure the file is in the same folder as this app (`app.py`).")
+    
 # Import the enhanced Google Sheets integration
 try:
     from sheets_integration import SheetsLearningHistory, create_learning_visualizations, integrate_sheets_learning
