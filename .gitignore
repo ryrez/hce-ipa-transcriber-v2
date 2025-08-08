@@ -6,9 +6,8 @@ venv/
 .Python
 *.egg-info/
 
-# Google Credentials - NEVER COMMIT
+# Google Credentials - NEVER COMMIT (be specific!)
 google_credentials.json
-*.json
 service-account*.json
 credentials*.json
 gcp_*.json
@@ -36,7 +35,3 @@ migration_output/
 # Backup files
 *_backup.py
 *.bak
-
-# Learning data (optional - you might want to keep these)
-auto_learning_log.jsonl
-corrections_log.jsonl
