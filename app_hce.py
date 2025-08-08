@@ -2,9 +2,11 @@ import streamlit as st
 import json
 import os
 from datetime import datetime
+from collections import defaultdict
+import requests
+import pandas as pd
 from ipa_converter import process_text, reconstruct_sentence, clean_word
 from overrides import update_override_dict
-import pandas as pd
 
 # Import Google Sheets integration
 try:
@@ -16,6 +18,7 @@ except ImportError:
 # Config
 LOG_FILE = "corrections_log.jsonl"
 AUTO_LEARN_FILE = "auto_learning_log.jsonl"
+CUSTOM_DICT_FILE = "custom_dict.json"
 
 # Page setup
 st.set_page_config(
@@ -32,7 +35,7 @@ if "current_text" not in st.session_state:
 if "auto_learn_enabled" not in st.session_state:
     st.session_state.auto_learn_enabled = True
 if "confidence_threshold" not in st.session_state:
-    st.session_state.confidence_threshold = 0.5  # Lower threshold for easier learning
+    st.session_state.confidence_threshold = 0.5
 
 # Initialize Google Sheets
 if SHEETS_AVAILABLE and 'sheets_history' not in st.session_state:
@@ -41,73 +44,172 @@ if SHEETS_AVAILABLE and 'sheets_history' not in st.session_state:
     if 'session_id' not in st.session_state:
         st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-# Reverse transcription class
-class IPAToEnglishTranscriber:
+class DialectAwareIPATranscriber:
     def __init__(self):
-        self.ipa_to_word_dict = {}
-        self.load_reverse_mappings()
+        self.ipa_to_word_dict = defaultdict(list)
+        self.word_to_ipa_dict = {}
+        self.load_resources()
     
-    def load_reverse_mappings(self):
-        """Load reverse mappings from override dictionary and auto-learning data"""
-        # Load from override dictionary
-        if os.path.exists("override_dict.json"):
+    def load_resources(self):
+        """Load all pronunciation resources"""
+        self.load_cmu_dict()
+        self.load_aus_dict()
+        self.load_custom_dict()
+    
+    def load_cmu_dict(self):
+        """Load CMU dictionary with US dialect tag"""
+        url = "https://raw.githubusercontent.com/Alexir/CMUdict/master/cmudict-0.7b"
+        try:
+            response = requests.get(url)
+            cmu_lines = response.text.split('\n')
+        except:
             try:
-                with open("override_dict.json", "r", encoding='utf-8') as f:
-                    override_dict = json.load(f)
-                
-                for word, ipa in override_dict.items():
-                    if ipa not in self.ipa_to_word_dict:
-                        self.ipa_to_word_dict[ipa] = []
-                    if word not in self.ipa_to_word_dict[ipa]:
-                        self.ipa_to_word_dict[ipa].append(word)
+                with open("cmudict-0.7b", 'r', encoding='latin-1') as f:
+                    cmu_lines = f.readlines()
             except:
-                pass
+                cmu_lines = []
+                st.error("Couldn't load CMU dictionary")
         
-        # Load from auto-learning logs (high confidence only)
-        if os.path.exists(AUTO_LEARN_FILE):
+        arpa_to_ipa = {
+            'AA': 'ɑ', 'AE': 'æ', 'AH': 'ə', 'AO': 'ɔ', 
+            'AW': 'aʊ', 'AY': 'aɪ', 'B': 'b', 'CH': 'tʃ',
+            'D': 'd', 'DH': 'ð', 'EH': 'ɛ', 'ER': 'ɝ', 
+            'EY': 'eɪ', 'F': 'f', 'G': 'ɡ', 'HH': 'h',
+            'IH': 'ɪ', 'IY': 'i', 'JH': 'dʒ', 'K': 'k',
+            'L': 'l', 'M': 'm', 'N': 'n', 'NG': 'ŋ',
+            'OW': 'oʊ', 'OY': 'ɔɪ', 'P': 'p', 'R': 'r',
+            'S': 's', 'SH': 'ʃ', 'T': 't', 'TH': 'θ',
+            'UH': 'ʊ', 'UW': 'u', 'V': 'v', 'W': 'w',
+            'Y': 'j', 'Z': 'z', 'ZH': 'ʒ'
+        }
+        
+        for line in cmu_lines:
+            if line.startswith(';'): continue
+            parts = line.split('  ')
+            if len(parts) >= 2:
+                word = parts[0].lower()
+                phonemes = parts[1].strip().split()
+                ipa = ' '.join([arpa_to_ipa.get(p, p) for p in phonemes])
+                
+                self._add_mapping(
+                    ipa=ipa,
+                    word=word,
+                    source="cmu",
+                    dialect="us"
+                )
+    
+    def load_aus_dict(self):
+        """Load Australian-specific pronunciations"""
+        aus_mappings = {
+            "dance": "dæːns",
+            "castle": "kæːsəl",
+            "path": "pɑːθ",
+            "bath": "bɑːθ",
+            "laugh": "lɑːf",
+            "chance": "tʃɑːns",
+            "plant": "plɑːnt",
+            "graph": "ɡrɑːf",
+            "example": "ɪɡzɑːmpəl"
+        }
+        
+        for word, ipa in aus_mappings.items():
+            self._add_mapping(
+                ipa=ipa,
+                word=word,
+                source="aus_override",
+                dialect="au"
+            )
+    
+    def load_custom_dict(self):
+        """Load user-corrected pronunciations"""
+        if os.path.exists(CUSTOM_DICT_FILE):
             try:
-                word_confidence = {}
-                with open(AUTO_LEARN_FILE, "r", encoding='utf-8') as f:
-                    for line in f:
-                        entry = json.loads(line)
-                        word = entry.get('word', '')
-                        ipa = entry.get('ipa_choice', '')
-                        confidence = entry.get('confidence', 0)
-                        
-                        if word and ipa and confidence >= 0.6:
-                            key = (ipa, word)
-                            if key not in word_confidence or confidence > word_confidence[key]:
-                                word_confidence[key] = confidence
+                with open(CUSTOM_DICT_FILE, 'r', encoding='utf-8') as f:
+                    custom_data = json.load(f)
                 
-                # Add high confidence mappings
-                for (ipa, word), confidence in word_confidence.items():
-                    if ipa not in self.ipa_to_word_dict:
-                        self.ipa_to_word_dict[ipa] = []
-                    if word not in self.ipa_to_word_dict[ipa]:
-                        self.ipa_to_word_dict[ipa].append(word)
-            except:
-                pass
+                for entry in custom_data:
+                    self._add_mapping(
+                        ipa=entry['ipa'],
+                        word=entry['word'],
+                        source="user",
+                        dialect=entry.get('dialect', 'au'),
+                        is_custom=True
+                    )
+            except Exception as e:
+                st.error(f"Error loading custom dict: {e}")
     
-    def find_word_candidates(self, ipa_input):
-        """Find English word candidates for given IPA"""
-        ipa_input = ipa_input.strip()
-        if ipa_input in self.ipa_to_word_dict:
-            return self.ipa_to_word_dict[ipa_input]
-        return []
+    def _add_mapping(self, ipa, word, source, dialect, is_custom=False):
+        """Add a pronunciation mapping with metadata"""
+        entry = {
+            'word': word,
+            'dialect': dialect,
+            'source': source,
+            'is_custom': is_custom
+        }
+        
+        if entry not in self.ipa_to_word_dict[ipa]:
+            self.ipa_to_word_dict[ipa].append(entry)
+        
+        if word not in self.word_to_ipa_dict:
+            self.word_to_ipa_dict[word] = []
+        
+        ipa_entry = {
+            'ipa': ipa,
+            'dialect': dialect,
+            'source': source,
+            'is_custom': is_custom
+        }
+        
+        if ipa_entry not in self.word_to_ipa_dict[word]:
+            self.word_to_ipa_dict[word].append(ipa_entry)
     
-    def transcribe_ipa_sequence(self, ipa_sequence):
-        """Transcribe IPA sequence to potential English words"""
-        ipa_words = [w.strip() for w in ipa_sequence.split() if w.strip()]
-        results = []
+    def find_word_candidates(self, ipa_input, dialect_preference=None):
+        """Find words matching IPA, optionally filtered by dialect"""
+        candidates = self.ipa_to_word_dict.get(ipa_input, [])
         
-        for ipa_word in ipa_words:
-            candidates = self.find_word_candidates(ipa_word)
-            results.append({
-                'ipa_input': ipa_word,
-                'candidates': candidates[:5]
-            })
+        if dialect_preference:
+            candidates = sorted(
+                candidates,
+                key=lambda x: x['dialect'] == dialect_preference,
+                reverse=True
+            )
         
-        return results
+        return candidates
+    
+    def teach_pronunciation(self, word, ipa, dialect='au'):
+        """Teach the system a new pronunciation"""
+        word = word.lower().strip()
+        
+        custom_entry = {
+            'word': word,
+            'ipa': ipa,
+            'dialect': dialect,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        custom_data = []
+        if os.path.exists(CUSTOM_DICT_FILE):
+            with open(CUSTOM_DICT_FILE, 'r', encoding='utf-8') as f:
+                custom_data = json.load(f)
+        
+        custom_data.append(custom_entry)
+        
+        with open(CUSTOM_DICT_FILE, 'w', encoding='utf-8') as f:
+            json.dump(custom_data, f, ensure_ascii=False, indent=2)
+        
+        self._add_mapping(
+            ipa=ipa,
+            word=word,
+            source="user",
+            dialect=dialect,
+            is_custom=True
+        )
+        
+        return True
+
+# Initialize reverse transcriber
+if 'reverse_transcriber' not in st.session_state:
+    st.session_state.reverse_transcriber = DialectAwareIPATranscriber()
 
 def force_save_to_override(word, ipa):
     """Force save a word-IPA pair to override dictionary"""
@@ -130,11 +232,6 @@ def force_save_to_override(word, ipa):
 def auto_learn_from_selection(word_data, selected_option, interaction_type="selection"):
     """Enhanced auto-learning with immediate saving option"""
     clean_word_val = word_data.get('clean', word_data.get('original', '').lower())
-    
-    print(f"DEBUG: auto_learn_from_selection called")
-    print(f"DEBUG: word_data = {word_data}")
-    print(f"DEBUG: selected_option = {selected_option}")
-    print(f"DEBUG: clean_word_val = {clean_word_val}")
     
     # Load existing auto-learning data
     auto_data = {}
@@ -171,7 +268,7 @@ def auto_learn_from_selection(word_data, selected_option, interaction_type="sele
     
     # Boost for manual corrections and accept_all
     if interaction_type == "manual_correction":
-        confidence_multiplier = 2.0  # Higher boost
+        confidence_multiplier = 2.0
     elif interaction_type == "accept_all":
         confidence_multiplier = 1.5
     else:
@@ -193,8 +290,6 @@ def auto_learn_from_selection(word_data, selected_option, interaction_type="sele
     with open(AUTO_LEARN_FILE, "a", encoding='utf-8') as f:
         f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
     
-    print(f"DEBUG: Logged learning entry: {log_entry}")
-    
     # Google Sheets logging
     if SHEETS_AVAILABLE and st.session_state.get('sheets_connected', False):
         try:
@@ -209,10 +304,8 @@ def auto_learn_from_selection(word_data, selected_option, interaction_type="sele
     # Auto-promote to override dictionary with lower threshold
     should_promote = (
         final_confidence >= st.session_state.confidence_threshold 
-        and auto_data[clean_word_val][selected_option]['count'] >= 1  # Only need 1 selection now
+        and auto_data[clean_word_val][selected_option]['count'] >= 1
     )
-    
-    print(f"DEBUG: Should promote? {should_promote} (confidence: {final_confidence:.2f}, threshold: {st.session_state.confidence_threshold}, count: {auto_data[clean_word_val][selected_option]['count']})")
     
     if should_promote or interaction_type in ["manual_correction", "accept_all"]:
         override_dict = {}
@@ -228,14 +321,9 @@ def auto_learn_from_selection(word_data, selected_option, interaction_type="sele
         with open("override_dict.json", "w", encoding='utf-8') as f:
             json.dump(override_dict, f, ensure_ascii=False, indent=2)
         
-        print(f"DEBUG: Promoted '{clean_word_val}' → '{selected_option}' to override dict")
         return True
     
     return False
-
-# Initialize reverse transcriber
-if 'reverse_transcriber' not in st.session_state:
-    st.session_state.reverse_transcriber = IPAToEnglishTranscriber()
 
 # Main UI
 st.title("🇦🇺 HCE IPA Transcriber")
@@ -268,6 +356,31 @@ with st.sidebar:
             if st.button("Retry Connection"):
                 st.session_state.sheets_connected = st.session_state.sheets_history.initialize_connection()
                 st.rerun()
+    
+    # Teaching stats
+    st.markdown("---")
+    st.markdown("### 🧠 Teaching Stats")
+    
+    custom_count = 0
+    if os.path.exists(CUSTOM_DICT_FILE):
+        with open(CUSTOM_DICT_FILE, 'r', encoding='utf-8') as f:
+            custom_data = json.load(f)
+        custom_count = len(custom_data)
+    
+    st.metric("Custom Pronunciations", custom_count)
+    
+    if custom_count > 0:
+        dialects = defaultdict(int)
+        for entry in custom_data:
+            dialects[entry.get('dialect', 'au')] += 1
+        
+        st.markdown("**By Dialect:**")
+        for dialect, count in dialects.items():
+            st.write(f"- {dialect.upper()}: {count}")
+    
+    if st.button("🔄 Refresh Pronunciation Data"):
+        st.session_state.reverse_transcriber = DialectAwareIPATranscriber()
+        st.rerun()
 
 # Tabs for bidirectional transcription
 tab1, tab2, tab3 = st.tabs(["🇦🇺 English → IPA", "🔄 IPA → English", "🔧 Debug"])
@@ -285,7 +398,6 @@ with tab1:
         
         word_words = [wr for wr in st.session_state.word_results if wr.get("original", "").replace("'", "").isalnum()]
         
-        # Simple layout for word selection
         for i, word_data in enumerate(word_words):
             word_idx = st.session_state.word_results.index(word_data)
             
@@ -306,7 +418,6 @@ with tab1:
                     )
                     st.session_state.word_results[word_idx]['selected'] = selected
                     
-                    # Auto-learning on selection change
                     if st.session_state.auto_learn_enabled:
                         current_selection = st.session_state.word_results[word_idx].get('last_selection')
                         if current_selection != selected:
@@ -326,7 +437,6 @@ with tab1:
                 )
                 st.session_state.word_results[word_idx]['correction'] = correction if correction else None
                 
-                # Auto-learning for corrections
                 if correction and st.session_state.auto_learn_enabled:
                     current_correction = st.session_state.word_results[word_idx].get('last_correction')
                     if current_correction != correction:
@@ -334,18 +444,15 @@ with tab1:
                         st.session_state.word_results[word_idx]['last_correction'] = correction
             
             with col4:
-                # Force learn button
                 final_ipa = word_data.get('correction') or word_data.get('selected', '')
                 if final_ipa and st.button("💾", key=f"force_{word_idx}", help="Force save this word"):
                     force_save_to_override(word_data['clean'], final_ipa)
                     st.rerun()
         
-        # Full sentence result
         st.markdown("### Full Sentence IPA:")
         full_ipa = reconstruct_sentence(st.session_state.word_results)
         st.code(full_ipa, language=None)
         
-        # Action buttons
         col1, col2, col3 = st.columns([1, 1, 2])
         
         with col1:
@@ -362,7 +469,6 @@ with tab1:
                                 auto_promotions += 1
                             learned_words.append(f"{word_data['original']} → {final_choice}")
                 
-                # Log sentence completion
                 sentence_log = {
                     "timestamp": datetime.now().isoformat(),
                     "text": st.session_state.current_text,
@@ -379,8 +485,7 @@ with tab1:
                 else:
                     st.success(f"✅ Learned {len(learned_words)} words")
                 
-                # Refresh reverse transcriber
-                st.session_state.reverse_transcriber = IPAToEnglishTranscriber()
+                st.session_state.reverse_transcriber = DialectAwareIPATranscriber()
         
         with col2:
             if st.button("🔄 Clear", use_container_width=True):
@@ -389,58 +494,90 @@ with tab1:
                 st.rerun()
 
 with tab2:
-    # IPA to English transcription
-    st.markdown("### 🔄 IPA to English Reverse Transcription")
-    st.markdown("*Convert IPA back to English using your learned pronunciations*")
+    st.markdown("### 🔄 IPA to English (with Dialect Support)")
     
     col1, col2 = st.columns([3, 1])
     with col1:
         ipa_input = st.text_input(
             "Enter IPA transcription:", 
             placeholder="e.g., dɑːns kɑːsəl pɑːθ",
-            help="Enter IPA symbols separated by spaces for multiple words"
+            key="ipa_input"
         )
     
     with col2:
-        if st.button("🔄 Refresh Mappings"):
-            st.session_state.reverse_transcriber = IPAToEnglishTranscriber()
-            st.success("Refreshed!")
+        dialect_pref = st.selectbox(
+            "Dialect preference:",
+            ["Any", "Australian (AU)", "American (US)"],
+            key="dialect_pref"
+        )
     
     if ipa_input:
-        results = st.session_state.reverse_transcriber.transcribe_ipa_sequence(ipa_input)
+        dialect_map = {
+            "Any": None,
+            "Australian (AU)": "au",
+            "American (US)": "us"
+        }
         
-        if results:
-            st.markdown("#### Possible English Words:")
-            
-            for result in results:
-                ipa_segment = result['ipa_input']
-                candidates = result['candidates']
-                
-                col1, col2 = st.columns([1, 3])
-                
-                with col1:
-                    st.markdown(f"**`{ipa_segment}`**")
-                
-                with col2:
-                    if candidates:
-                        candidate_text = " | ".join(candidates)
-                        st.markdown(f"→ **{candidate_text}**")
-                    else:
-                        st.info("No learned words found")
+        results = []
+        for ipa_segment in ipa_input.split():
+            candidates = st.session_state.reverse_transcriber.find_word_candidates(
+                ipa_segment,
+                dialect_preference=dialect_map[dialect_pref]
+            )
+            results.append({
+                'ipa_input': ipa_segment,
+                'candidates': candidates
+            })
         
-        # Quick stats about reverse transcription
-        with st.expander("📊 Reverse Transcription Stats"):
-            total_patterns = len(st.session_state.reverse_transcriber.ipa_to_word_dict)
-            total_words = sum(len(words) for words in st.session_state.reverse_transcriber.ipa_to_word_dict.values())
+        st.markdown("#### Possible English Words:")
+        
+        for result in results:
+            ipa_segment = result['ipa_input']
+            candidates = result['candidates']
             
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("IPA Patterns Learned", total_patterns)
-            with col2:
-                st.metric("Total Word Mappings", total_words)
+            with st.expander(f"IPA: `{ipa_segment}`"):
+                if not candidates:
+                    st.info("No matches found")
+                    continue
+                
+                for candidate in candidates[:5]:
+                    source_badge = {
+                        "cmu": "📚 CMU",
+                        "aus_override": "🇦🇺 AU",
+                        "user": "✨ Custom"
+                    }.get(candidate['source'], candidate['source'])
+                    
+                    st.write(f"""
+                    **{candidate['word']}**  
+                    - Dialect: `{candidate['dialect'].upper()}`  
+                    - Source: {source_badge}
+                    """)
+    
+    with st.expander("💡 Teach New Pronunciation"):
+        teach_col1, teach_col2 = st.columns(2)
+        with teach_col1:
+            teach_word = st.text_input("English word:")
+            teach_dialect = st.selectbox(
+                "Dialect:",
+                ["au", "us", "uk"],
+                key="teach_dialect"
+            )
+        with teach_col2:
+            teach_ipa = st.text_input("IPA transcription:")
+        
+        if st.button("Teach Pronunciation"):
+            if teach_word and teach_ipa:
+                success = st.session_state.reverse_transcriber.teach_pronunciation(
+                    teach_word,
+                    teach_ipa,
+                    teach_dialect
+                )
+                if success:
+                    st.success("Pronunciation learned! Refresh to see changes.")
+            else:
+                st.warning("Please enter both word and IPA")
 
 with tab3:
-    # Debug tab
     st.markdown("### 🔧 Debug & Learning Status")
     
     col1, col2 = st.columns(2)
@@ -460,7 +597,6 @@ with tab3:
         else:
             st.info("No override_dict.json found")
         
-        # Test word processing
         st.markdown("#### Test Word Processing")
         test_word = st.text_input("Test word:", placeholder="e.g., dance")
         if test_word:
@@ -475,7 +611,7 @@ with tab3:
         if os.path.exists(AUTO_LEARN_FILE):
             try:
                 with open(AUTO_LEARN_FILE, "r", encoding='utf-8') as f:
-                    lines = f.readlines()[-10:]  # Last 10 entries
+                    lines = f.readlines()[-10:]
                 
                 if lines:
                     for line in lines:
@@ -490,7 +626,6 @@ with tab3:
         else:
             st.info("No auto_learning_log.jsonl found")
         
-        # Force clear all learning
         st.markdown("#### Reset Learning")
         if st.button("🗑️ Clear All Learning Data", type="secondary"):
             try:
@@ -500,7 +635,10 @@ with tab3:
                     os.remove(AUTO_LEARN_FILE)
                 if os.path.exists(LOG_FILE):
                     os.remove(LOG_FILE)
+                if os.path.exists(CUSTOM_DICT_FILE):
+                    os.remove(CUSTOM_DICT_FILE)
                 st.success("All learning data cleared!")
+                st.session_state.reverse_transcriber = DialectAwareIPATranscriber()
                 st.rerun()
             except Exception as e:
                 st.error(f"Error clearing data: {e}")
@@ -520,74 +658,6 @@ with st.expander("🧪 Quick Test Examples"):
                 st.session_state.current_text = example
                 st.session_state.word_results = process_text(example)
                 st.rerun()
-
-# Basic learning statistics in sidebar
-with st.sidebar:
-    st.markdown("---")
-    st.markdown("### 📈 Learning Stats")
-    
-    # Count learned words
-    override_count = 0
-    if os.path.exists("override_dict.json"):
-        try:
-            with open("override_dict.json", "r", encoding='utf-8') as f:
-                override_dict = json.load(f)
-                override_count = len(override_dict)
-        except:
-            pass
-    
-    # Count total interactions
-    total_interactions = 0
-    if os.path.exists(AUTO_LEARN_FILE):
-        try:
-            with open(AUTO_LEARN_FILE, "r", encoding='utf-8') as f:
-                total_interactions = len(f.readlines())
-        except:
-            pass
-    
-    st.metric("Words Learned", override_count)
-    st.metric("Total Interactions", total_interactions)
-    
-    # Show recent activity
-    if os.path.exists(AUTO_LEARN_FILE):
-        try:
-            with open(AUTO_LEARN_FILE, "r", encoding='utf-8') as f:
-                lines = f.readlines()
-            
-            if lines:
-                st.markdown("**Recent Activity:**")
-                for line in lines[-3:]:
-                    entry = json.loads(line)
-                    confidence = entry.get('confidence', 0)
-                    confidence_color = "🟢" if confidence >= st.session_state.confidence_threshold else "🟡"
-                    st.caption(f"{confidence_color} {entry['word']} → {entry['ipa_choice']}")
-        except:
-            pass
-
-# Google Sheets setup instructions
-if SHEETS_AVAILABLE:
-    with st.expander("⚙️ Google Sheets Setup"):
-        st.markdown("""
-        ### Setting up Google Sheets Integration:
-        
-        1. Create a Google Cloud Project and enable Google Sheets API
-        2. Create a Service Account and download JSON credentials
-        3. Add credentials to `.streamlit/secrets.toml`:
-        
-        ```toml
-        [gcp_service_account]
-        type = "service_account"
-        project_id = "your-project-id"
-        private_key = "-----BEGIN PRIVATE KEY-----\\nYOUR-KEY\\n-----END PRIVATE KEY-----\\n"
-        client_email = "your-service-account@your-project.iam.gserviceaccount.com"
-        # ... other fields
-        ```
-        
-        4. Share your Google Sheet with the service account email
-        5. Install required packages: `pip install gspread google-auth pandas`
-        """)
-else:
-    st.sidebar.warning("Install Google Sheets packages for cloud sync: `pip install gspread google-auth pandas`")
 
 # Footer
 st.markdown("---")
