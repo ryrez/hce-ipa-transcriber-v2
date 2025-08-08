@@ -518,54 +518,68 @@ with tab2:
             "American (US)": "us"
         }
         
+        # Normalize IPA input (remove spaces between phonemes)
+        normalized_ipa = ' '.join([p.strip() for p in ipa_input.split() if p.strip()])
+        
+        # Get matches for each IPA segment
         results = []
-        for ipa_segment in ipa_input.split():
+        for ipa_segment in normalized_ipa.split():
             candidates = st.session_state.reverse_transcriber.find_word_candidates(
                 ipa_segment,
                 dialect_preference=dialect_map[dialect_pref]
             )
+            
+            # Only keep candidates with high confidence
+            filtered_candidates = [
+                c for c in candidates 
+                if c['source'] in ['cmu', 'aus_override'] or c['is_custom']
+            ]
+            
             results.append({
                 'ipa_input': ipa_segment,
-                'candidates': candidates
+                'candidates': filtered_candidates[:10]  # Limit to top 10
             })
         
         st.markdown("#### Possible English Words:")
         
-        for result in results:
-            ipa_segment = result['ipa_input']
-            candidates = result['candidates']
-            
-            with st.expander(f"IPA: `{ipa_segment}`"):
+        if not any(r['candidates'] for r in results):
+            st.warning("No matching words found. Try teaching the pronunciation below.")
+        else:
+            for result in results:
+                ipa_segment = result['ipa_input']
+                candidates = result['candidates']
+                
                 if not candidates:
-                    st.info("No matches found")
                     continue
                 
-                for candidate in candidates[:5]:
-                    source_badge = {
-                        "cmu": "📚 CMU",
-                        "aus_override": "🇦🇺 AU",
-                        "user": "✨ Custom"
-                    }.get(candidate['source'], candidate['source'])
-                    
-                    st.write(f"""
-                    **{candidate['word']}**  
-                    - Dialect: `{candidate['dialect'].upper()}`  
-                    - Source: {source_badge}
-                    """)
+                with st.expander(f"IPA: `{ipa_segment}`"):
+                    for candidate in candidates:
+                        source_badge = {
+                            "cmu": "📚 CMU (US)",
+                            "aus_override": "🇦🇺 AU",
+                            "user": "✨ Custom"
+                        }.get(candidate['source'], candidate['source'])
+                        
+                        st.markdown(f"""
+                        **{candidate['word']}**  
+                        - Dialect: `{candidate['dialect'].upper()}`  
+                        - Source: {source_badge}
+                        """)
     
-    with st.expander("💡 Teach New Pronunciation"):
+    # Teaching interface
+    with st.expander("💡 Teach New Pronunciation", expanded=False):
         teach_col1, teach_col2 = st.columns(2)
         with teach_col1:
-            teach_word = st.text_input("English word:")
+            teach_word = st.text_input("English word:", key="teach_word")
             teach_dialect = st.selectbox(
                 "Dialect:",
                 ["au", "us", "uk"],
                 key="teach_dialect"
             )
         with teach_col2:
-            teach_ipa = st.text_input("IPA transcription:")
+            teach_ipa = st.text_input("IPA transcription:", key="teach_ipa")
         
-        if st.button("Teach Pronunciation"):
+        if st.button("Teach Pronunciation", key="teach_button"):
             if teach_word and teach_ipa:
                 success = st.session_state.reverse_transcriber.teach_pronunciation(
                     teach_word,
@@ -573,10 +587,11 @@ with tab2:
                     teach_dialect
                 )
                 if success:
-                    st.success("Pronunciation learned! Refresh to see changes.")
+                    st.success("Pronunciation learned! The word will now appear in future searches.")
+                    st.rerun()
             else:
                 st.warning("Please enter both word and IPA")
-
+                
 with tab3:
     st.markdown("### 🔧 Debug & Learning Status")
     
