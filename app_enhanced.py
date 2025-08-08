@@ -391,23 +391,6 @@ with st.sidebar:
         if st.session_state.get('sheets_connected', False):
             st.success("✅ Connected to Google Sheets")
             
-            # Dashboard toggle
-            if st.toggle("Show Learning Dashboard", key="show_dashboard"):
-                try:
-                    dashboard_data = st.session_state.sheets_history.get_learning_dashboard_data(days=30)
-                    if dashboard_data:
-                        st.markdown("**Recent Activity (30 days):**")
-                        summary = dashboard_data.get('summary', {})
-                        
-                        if summary:
-                            st.metric("Total Cloud Interactions", summary.get('total_interactions', 0))
-                            st.metric("Cloud Unique Words", summary.get('unique_words', 0))
-                            
-                            confidence_rate = summary.get('high_confidence_rate', 0) * 100
-                            st.metric("Cloud Confidence Rate", f"{confidence_rate:.1f}%")
-                except Exception as e:
-                    st.error(f"Dashboard error: {str(e)}")
-            
             # Export options
             if st.button("📥 Export Learning Report", use_container_width=True):
                 try:
