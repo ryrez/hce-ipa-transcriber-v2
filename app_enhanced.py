@@ -7,12 +7,6 @@ from overrides import update_override_dict
 import time
 import pandas as pd
 
-# App Title
-st.title("🧪 Markdown Display Debug")
-
-# Show current working directory
-st.write("**Current Working Directory:**", os.getcwd())
-
 # Check if the file exists
 if os.path.exists("user_guide.md"):
     st.success("✅ `user_guide.md` found!")
