@@ -383,32 +383,6 @@ with st.sidebar:
         confidence_rate = round((stats["high_confidence_words"] / stats["total_interactions"]) * 100, 1)
         st.metric("High Confidence Rate", f"{confidence_rate}%")
     
-    # Google Sheets status and controls
-    if SHEETS_AVAILABLE:
-        st.markdown("---")
-        st.markdown("### 📊 Google Sheets Integration")
-        
-        if st.session_state.get('sheets_connected', False):
-            st.success("✅ Connected to Google Sheets")
-            
-            # Export options
-            if st.button("📥 Export Learning Report", use_container_width=True):
-                try:
-                    report = st.session_state.sheets_history.export_learning_report('json')
-                    st.download_button(
-                        "Download JSON Report",
-                        report,
-                        file_name=f"hce_learning_report_{datetime.now().strftime('%Y%m%d')}.json",
-                        mime="application/json"
-                    )
-                except Exception as e:
-                    st.error(f"Export failed: {str(e)}")
-        else:
-            st.error("❌ Google Sheets not connected")
-            st.info("Add your Google service account credentials to connect")
-    else:
-        st.warning("📦 Install Google Sheets packages for cloud sync")
-    
     # Recent activity from local logs
     st.markdown("---")
     st.markdown("### 📈 Recent Local Activity")
