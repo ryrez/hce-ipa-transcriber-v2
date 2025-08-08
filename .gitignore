@@ -35,3 +35,13 @@ migration_output/
 # Backup files
 *_backup.py
 *.bak
+
+# Credential files
+google_credentials.json
+*.json
+!google_credentials_template.json
+!hce_map.json
+!override_dict.json
+.env
+.env.local
+secrets/

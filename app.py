@@ -6,69 +6,37 @@ from ipa_converter import process_text, reconstruct_sentence, clean_word
 from overrides import update_override_dict
 
 # --- FIXED Google Sheets Setup ---
-def initialize_google_sheets():
-    """Initialize Google Sheets connection with proper fallbacks"""
+def load_google_credentials():
+    """Load Google credentials from Streamlit secrets or local file"""
     try:
-        # First try Streamlit secrets (for cloud deployment)
+        # Try Streamlit secrets first (for cloud deployment)
         if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-            import gspread
-            from google.oauth2.service_account import Credentials
-            
-            credentials_dict = dict(st.secrets["gcp_service_account"])
-            creds = Credentials.from_service_account_info(
-                credentials_dict,
-                scopes=[
-                    "https://www.googleapis.com/auth/spreadsheets",
-                    "https://www.googleapis.com/auth/drive"
-                ]
-            )
-            gc = gspread.authorize(creds)
-            st.success("✅ Connected to Google Sheets via Streamlit secrets")
-            return gc
-        
-        # Then try local credentials file (for local development)
-        elif os.path.exists("google_credentials.json"):
-            import gspread
-            from google.oauth2.service_account import Credentials
-            
-            creds = Credentials.from_service_account_file(
-                "google_credentials.json",
-                scopes=[
-                    "https://www.googleapis.com/auth/spreadsheets",
-                    "https://www.googleapis.com/auth/drive"
-                ]
-            )
-            gc = gspread.authorize(creds)
-            st.success("✅ Connected to Google Sheets via local credentials")
-            return gc
-        
-        else:
-            st.info("ℹ️ Google Sheets credentials not found. Using local storage only.")
-            return None
-            
-    except ImportError:
-        st.info("ℹ️ Google Sheets libraries not available. Using local storage only.")
-        return None
+            return dict(st.secrets['gcp_service_account'])
     except Exception as e:
-        st.warning(f"⚠️ Google Sheets connection failed: {str(e)}")
-        return None
-
-# Initialize Google Sheets (optional)
-gc = initialize_google_sheets()
-
-# Only try to access sheets if connection successful
-if gc:
-    SHEET_NAME = "HCE IPA Training Data"
+        st.warning(f"Could not load from Streamlit secrets: {e}")
+    
     try:
-        worksheet = gc.open(SHEET_NAME).sheet1
-        first_row = worksheet.row_values(1)
-        st.success(f"✅ Successfully connected to Google Sheet: {SHEET_NAME}")
+        # Fallback to local file (for development)
+        with open('google_credentials.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        st.warning("Google credentials not found. Google Sheets features disabled.")
+        return None
     except Exception as e:
-        st.warning(f"⚠️ Error accessing Google Sheet '{SHEET_NAME}': {e}")
-        st.info("💡 Tip: Make sure the sheet exists and is shared with your service account")
-        gc = None  # Disable sheets functionality
+        st.error(f"Error loading Google credentials: {e}")
+        return None
+
+# Usage in your app
+credentials = load_google_credentials()
+if credentials:
+    # Initialize Google Sheets client
+    import gspread
+    from google.oauth2.service_account import Credentials
+    
+    creds = Credentials.from_service_account_info(credentials)
+    client = gspread.authorize(creds)
 else:
-    st.info("ℹ️ Running in local storage mode - Google Sheets features disabled")
+    st.info("Running in local mode without Google Sheets integration")
 
 # --- Config ---
 LOG_FILE = "corrections_log.jsonl"
