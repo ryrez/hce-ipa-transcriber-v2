@@ -1,0 +1,2 @@
+echo espeak-ng > packages.txt
+echo espeak-ng-data >> packages.txt
