@@ -5,6 +5,20 @@ from datetime import datetime
 from ipa_converter import process_text, reconstruct_sentence, clean_word
 from overrides import update_override_dict
 
+# App Title
+st.title("HCE IPA Transcriber")
+
+# Load and display the Markdown user guide
+try:
+    with open("user_guide.md", "r", encoding="utf-8") as f:
+        markdown_text = f.read()
+
+    with st.expander("📘 How to Use This App", expanded=False):
+        st.markdown(markdown_text, unsafe_allow_html=True)
+
+except FileNotFoundError:
+    st.error("⚠️ user_guide.md not found. Please make sure the file exists in your project folder.")
+
 # --- FIXED Google Sheets Setup ---
 def load_google_credentials():
     """Load Google credentials from Streamlit secrets or local file"""
