@@ -7,17 +7,64 @@ from overrides import update_override_dict
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- Google Sheets Setup ---
-SERVICE_ACCOUNT_PATH = os.path.join("secrets", "service_account.json")
-creds = Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_PATH,
-    scopes=[
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-)
+# --- FIXED Google Sheets Setup ---
+def initialize_google_sheets():
+    """Initialize Google Sheets connection with proper fallbacks"""
+    try:
+        # First try Streamlit secrets (for cloud deployment)
+        if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+            credentials_dict = dict(st.secrets["gcp_service_account"])
+            creds = Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=[
+                    "https://www.googleapis.com/auth/spreadsheets",
+                    "https://www.googleapis.com/auth/drive"
+                ]
+            )
+            gc = gspread.authorize(creds)
+            st.success("✅ Connected to Google Sheets via Streamlit secrets")
+            return gc
+        
+        # Then try local credentials file (for local development)
+        elif os.path.exists("google_credentials.json"):
+            creds = Credentials.from_service_account_file(
+                "google_credentials.json",
+                scopes=[
+                    "https://www.googleapis.com/auth/spreadsheets",
+                    "https://www.googleapis.com/auth/drive"
+                ]
+            )
+            gc = gspread.authorize(creds)
+            st.success("✅ Connected to Google Sheets via local credentials")
+            return gc
+        
+        # Legacy path (remove this problematic code)
+        # elif os.path.exists(os.path.join("secrets", "service_account.json")):
+        #     # This will fail in Streamlit Cloud
+        
+        else:
+            st.warning("⚠️ Google Sheets credentials not found. Using local storage only.")
+            return None
+            
+    except Exception as e:
+        st.error(f"❌ Google Sheets connection failed: {str(e)}")
+        return None
 
-gc = gspread.authorize(creds)
+# Initialize Google Sheets
+gc = initialize_google_sheets()
+
+# Only try to access sheets if connection successful
+if gc:
+    SHEET_NAME = "HCE IPA Training Data"
+    try:
+        worksheet = gc.open(SHEET_NAME).sheet1
+        first_row = worksheet.row_values(1)
+        st.write("✅ Successfully read the first row from the Google Sheet:")
+        st.write(first_row)
+    except Exception as e:
+        st.error(f"❌ Error accessing Google Sheet: {e}")
+else:
+    st.info("ℹ️ Running in local storage mode - Google Sheets features disabled")
 
 SHEET_NAME = "HCE IPA Training Data"
 try:
