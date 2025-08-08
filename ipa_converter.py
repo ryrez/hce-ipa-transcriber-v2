@@ -29,14 +29,16 @@ except FileNotFoundError:
         "ɔ": "ɔ"
     }
 
-# Load override dict if exists
-OVERRIDE_DICT = {}
-if os.path.exists("override_dict.json"):
-    try:
-        with open("override_dict.json", "r", encoding='utf-8') as f:
-            OVERRIDE_DICT = json.load(f)
-    except:
-        pass
+def load_override_dict():
+    """Load override dict dynamically (called each time we need it)"""
+    override_dict = {}
+    if os.path.exists("override_dict.json"):
+        try:
+            with open("override_dict.json", "r", encoding='utf-8') as f:
+                override_dict = json.load(f)
+        except:
+            pass
+    return override_dict
 
 def check_espeak_available():
     """Check if espeak-ng is available"""
@@ -182,19 +184,22 @@ def clean_word(word):
 
 def process_text(text):
     """Process text into IPA with cloud-friendly fallbacks"""
+    # IMPORTANT: Load override dict fresh each time
+    override_dict = load_override_dict()
+    
     words = text.split()
     results = []
     
     for word in words:
         clean = clean_word(word)
         
-        # Check override dictionary first
-        if clean in OVERRIDE_DICT:
+        # Check override dictionary first (now freshly loaded)
+        if clean in override_dict:
             results.append({
                 "original": word,
                 "clean": clean,
-                "ipa_options": [OVERRIDE_DICT[clean]],
-                "selected": OVERRIDE_DICT[clean],
+                "ipa_options": [override_dict[clean]],
+                "selected": override_dict[clean],
                 "has_override": True
             })
             continue
@@ -240,7 +245,8 @@ def process_text(text):
             "original": word,
             "clean": clean, 
             "ipa_options": ipa_options,
-            "selected": ipa_options[0] if ipa_options else clean
+            "selected": ipa_options[0] if ipa_options else clean,
+            "has_override": False
         })
     
     return results
@@ -259,11 +265,13 @@ def reconstruct_sentence(word_results):
 
 def get_system_info():
     """Get system info for debugging deployment issues"""
+    override_dict = load_override_dict()  # Load fresh for accurate count
     info = {
         "espeak_available": check_espeak_available(),
         "espeak_path": shutil.which("espeak-ng"),
         "hce_map_loaded": bool(HCE_MAP),
-        "override_dict_loaded": bool(OVERRIDE_DICT),
+        "override_dict_loaded": bool(override_dict),
+        "override_words_count": len(override_dict),
         "fallback_words_count": "200+"
     }
     return info
