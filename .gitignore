@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+venv/
+.Python
+*.egg-info/
+
+# Google Credentials - NEVER COMMIT
+google_credentials.json
+*.json
+service-account*.json
+credentials*.json
+gcp_*.json
+
+# Secrets
+secrets/
+.env
+.env.local
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Migration output
+migration_output/
+
+# Backup files
+*_backup.py
+*.bak
+
+# Learning data (optional - you might want to keep these)
+auto_learning_log.jsonl
+corrections_log.jsonl
