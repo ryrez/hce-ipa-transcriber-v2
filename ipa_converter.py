@@ -209,19 +209,20 @@ def process_text(text):
             })
             continue
         
-        # Try espeak first (if available)
+        # Try espeak first (if available), otherwise use fallback
         ipa_options = []
-        espeak_result = get_ipa_espeak(clean)
         
-        if espeak_result:
-            # Process espeak result
-            ipa_clean = espeak_result.replace("_", "").replace(" ", "")
-            # Apply HCE mappings
-            for standard, hce in HCE_MAP.items():
-                ipa_clean = ipa_clean.replace(standard, hce)
-            ipa_options.append(ipa_clean)
+        if check_espeak_available():
+            espeak_result = get_ipa_espeak(clean)
+            if espeak_result:
+                # Process espeak result
+                ipa_clean = espeak_result.replace("_", "").replace(" ", "")
+                # Apply HCE mappings
+                for standard, hce in HCE_MAP.items():
+                    ipa_clean = ipa_clean.replace(standard, hce)
+                ipa_options.append(ipa_clean)
         
-        # Add fallback options
+        # Add fallback options (always available)
         fallback_options = get_ipa_fallback(clean)
         if fallback_options:
             for option in fallback_options:
