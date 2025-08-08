@@ -6,18 +6,24 @@ from ipa_converter import process_text, reconstruct_sentence, clean_word
 from overrides import update_override_dict
 
 # App Title
-st.title("HCE IPA Transcriber")
+st.title("🧪 Markdown Display Debug")
 
-# Load and display the Markdown user guide
-try:
+# Show current working directory
+st.write("**Current Working Directory:**", os.getcwd())
+
+# Check if the file exists
+if os.path.exists("user_guide.md"):
+    st.success("✅ `user_guide.md` found!")
+
     with open("user_guide.md", "r", encoding="utf-8") as f:
         markdown_text = f.read()
 
     with st.expander("📘 How to Use This App", expanded=False):
         st.markdown(markdown_text, unsafe_allow_html=True)
 
-except FileNotFoundError:
-    st.error("⚠️ user_guide.md not found. Please make sure the file exists in your project folder.")
+else:
+    st.error("❌ `user_guide.md` not found.")
+    st.info("Make sure the file is in the same folder as this app (`app.py`).")
 
 # --- FIXED Google Sheets Setup ---
 def load_google_credentials():
