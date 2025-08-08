@@ -1,5 +1,9 @@
 from pathlib import Path
 
+# Create the user_guide.md file with the full guide content
+guide_md = """
+# 🎯 HCE IPA Transcriber User Guide
+
 ## Welcome to the HCE IPA Transcriber! 
 This tool converts text into IPA (International Phonetic Alphabet) transcription using the **HCE (Harmonized Consonant Enhancement)** system - perfect for linguistics research, language learning, and phonetic analysis.
 
@@ -214,4 +218,10 @@ This tool converts text into IPA (International Phonetic Alphabet) transcription
 **Technology**: Streamlit + Python + HCE Algorithm  
 **Status**: ✅ Fully Operational
 """
+
+# Write to user_guide.md
+guide_path = Path("user_guide.md")
+guide_path.write_text(guide_md.strip(), encoding="utf-8")
+
+guide_path.exists()
 
