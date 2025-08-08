@@ -32,7 +32,7 @@ if "current_text" not in st.session_state:
 if "auto_learn_enabled" not in st.session_state:
     st.session_state.auto_learn_enabled = True
 if "confidence_threshold" not in st.session_state:
-    st.session_state.confidence_threshold = 0.7
+    st.session_state.confidence_threshold = 0.5  # Lower threshold for easier learning
 
 # Initialize Google Sheets
 if SHEETS_AVAILABLE and 'sheets_history' not in st.session_state:
@@ -109,9 +109,32 @@ class IPAToEnglishTranscriber:
         
         return results
 
+def force_save_to_override(word, ipa):
+    """Force save a word-IPA pair to override dictionary"""
+    override_dict = {}
+    if os.path.exists("override_dict.json"):
+        try:
+            with open("override_dict.json", "r", encoding='utf-8') as f:
+                override_dict = json.load(f)
+        except:
+            pass
+    
+    override_dict[word] = ipa
+    
+    with open("override_dict.json", "w", encoding='utf-8') as f:
+        json.dump(override_dict, f, ensure_ascii=False, indent=2)
+    
+    st.success(f"✅ FORCED LEARNING: '{word}' → '{ipa}' saved to override dictionary!")
+    return True
+
 def auto_learn_from_selection(word_data, selected_option, interaction_type="selection"):
-    """Simple auto-learning with Google Sheets integration"""
+    """Enhanced auto-learning with immediate saving option"""
     clean_word_val = word_data.get('clean', word_data.get('original', '').lower())
+    
+    print(f"DEBUG: auto_learn_from_selection called")
+    print(f"DEBUG: word_data = {word_data}")
+    print(f"DEBUG: selected_option = {selected_option}")
+    print(f"DEBUG: clean_word_val = {clean_word_val}")
     
     # Load existing auto-learning data
     auto_data = {}
@@ -146,8 +169,14 @@ def auto_learn_from_selection(word_data, selected_option, interaction_type="sele
     total_selections = sum(data['count'] for data in auto_data[clean_word_val].values())
     base_confidence = auto_data[clean_word_val][selected_option]['count'] / total_selections
     
-    # Boost for manual corrections
-    confidence_multiplier = 1.5 if interaction_type == "manual_correction" else 1.0
+    # Boost for manual corrections and accept_all
+    if interaction_type == "manual_correction":
+        confidence_multiplier = 2.0  # Higher boost
+    elif interaction_type == "accept_all":
+        confidence_multiplier = 1.5
+    else:
+        confidence_multiplier = 1.0
+        
     final_confidence = min(1.0, base_confidence * confidence_multiplier)
     
     # Log the learning event
@@ -164,6 +193,8 @@ def auto_learn_from_selection(word_data, selected_option, interaction_type="sele
     with open(AUTO_LEARN_FILE, "a", encoding='utf-8') as f:
         f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
     
+    print(f"DEBUG: Logged learning entry: {log_entry}")
+    
     # Google Sheets logging
     if SHEETS_AVAILABLE and st.session_state.get('sheets_connected', False):
         try:
@@ -175,10 +206,15 @@ def auto_learn_from_selection(word_data, selected_option, interaction_type="sele
         except Exception as e:
             st.sidebar.error(f"Sheets sync failed: {str(e)}")
     
-    # Auto-promote to override dictionary
-    if (final_confidence >= st.session_state.confidence_threshold 
-        and auto_data[clean_word_val][selected_option]['count'] >= 2):
-        
+    # Auto-promote to override dictionary with lower threshold
+    should_promote = (
+        final_confidence >= st.session_state.confidence_threshold 
+        and auto_data[clean_word_val][selected_option]['count'] >= 1  # Only need 1 selection now
+    )
+    
+    print(f"DEBUG: Should promote? {should_promote} (confidence: {final_confidence:.2f}, threshold: {st.session_state.confidence_threshold}, count: {auto_data[clean_word_val][selected_option]['count']})")
+    
+    if should_promote or interaction_type in ["manual_correction", "accept_all"]:
         override_dict = {}
         if os.path.exists("override_dict.json"):
             try:
@@ -192,6 +228,7 @@ def auto_learn_from_selection(word_data, selected_option, interaction_type="sele
         with open("override_dict.json", "w", encoding='utf-8') as f:
             json.dump(override_dict, f, ensure_ascii=False, indent=2)
         
+        print(f"DEBUG: Promoted '{clean_word_val}' → '{selected_option}' to override dict")
         return True
     
     return False
@@ -215,7 +252,7 @@ with st.sidebar:
     
     st.session_state.confidence_threshold = st.slider(
         "Auto-Promote Threshold",
-        min_value=0.5,
+        min_value=0.3,
         max_value=1.0,
         value=st.session_state.confidence_threshold,
         step=0.1
@@ -233,7 +270,7 @@ with st.sidebar:
                 st.rerun()
 
 # Tabs for bidirectional transcription
-tab1, tab2 = st.tabs(["🇦🇺 English → IPA", "🔄 IPA → English"])
+tab1, tab2, tab3 = st.tabs(["🇦🇺 English → IPA", "🔄 IPA → English", "🔧 Debug"])
 
 with tab1:
     # English to IPA transcription
@@ -252,7 +289,7 @@ with tab1:
         for i, word_data in enumerate(word_words):
             word_idx = st.session_state.word_results.index(word_data)
             
-            col1, col2, col3 = st.columns([2, 3, 2])
+            col1, col2, col3, col4 = st.columns([2, 3, 2, 1])
             
             with col1:
                 st.markdown(f"**{word_data['original']}**")
@@ -269,9 +306,12 @@ with tab1:
                     )
                     st.session_state.word_results[word_idx]['selected'] = selected
                     
-                    # Auto-learning on selection
+                    # Auto-learning on selection change
                     if st.session_state.auto_learn_enabled:
-                        auto_learn_from_selection(word_data, selected, "selection")
+                        current_selection = st.session_state.word_results[word_idx].get('last_selection')
+                        if current_selection != selected:
+                            auto_learn_from_selection(word_data, selected, "selection")
+                            st.session_state.word_results[word_idx]['last_selection'] = selected
                 else:
                     ipa_option = word_data.get('ipa_options', [''])[0]
                     st.code(ipa_option)
@@ -288,7 +328,17 @@ with tab1:
                 
                 # Auto-learning for corrections
                 if correction and st.session_state.auto_learn_enabled:
-                    auto_learn_from_selection(word_data, correction, "manual_correction")
+                    current_correction = st.session_state.word_results[word_idx].get('last_correction')
+                    if current_correction != correction:
+                        auto_learn_from_selection(word_data, correction, "manual_correction")
+                        st.session_state.word_results[word_idx]['last_correction'] = correction
+            
+            with col4:
+                # Force learn button
+                final_ipa = word_data.get('correction') or word_data.get('selected', '')
+                if final_ipa and st.button("💾", key=f"force_{word_idx}", help="Force save this word"):
+                    force_save_to_override(word_data['clean'], final_ipa)
+                    st.rerun()
         
         # Full sentence result
         st.markdown("### Full Sentence IPA:")
@@ -388,6 +438,72 @@ with tab2:
                 st.metric("IPA Patterns Learned", total_patterns)
             with col2:
                 st.metric("Total Word Mappings", total_words)
+
+with tab3:
+    # Debug tab
+    st.markdown("### 🔧 Debug & Learning Status")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Override Dictionary")
+        if os.path.exists("override_dict.json"):
+            try:
+                with open("override_dict.json", "r", encoding='utf-8') as f:
+                    override_dict = json.load(f)
+                if override_dict:
+                    st.json(override_dict)
+                else:
+                    st.info("Override dictionary is empty")
+            except:
+                st.error("Error reading override_dict.json")
+        else:
+            st.info("No override_dict.json found")
+        
+        # Test word processing
+        st.markdown("#### Test Word Processing")
+        test_word = st.text_input("Test word:", placeholder="e.g., dance")
+        if test_word:
+            clean_test = clean_word(test_word)
+            results = process_text(test_word)
+            st.write(f"**Clean word:** `{clean_test}`")
+            st.write("**Processing results:**")
+            st.json(results)
+    
+    with col2:
+        st.markdown("#### Recent Auto-Learning")
+        if os.path.exists(AUTO_LEARN_FILE):
+            try:
+                with open(AUTO_LEARN_FILE, "r", encoding='utf-8') as f:
+                    lines = f.readlines()[-10:]  # Last 10 entries
+                
+                if lines:
+                    for line in lines:
+                        entry = json.loads(line)
+                        confidence = entry.get('confidence', 0)
+                        confidence_color = "🟢" if confidence >= st.session_state.confidence_threshold else "🟡"
+                        st.caption(f"{confidence_color} {entry['word']} → {entry['ipa_choice']} (conf: {confidence:.2f})")
+                else:
+                    st.info("No auto-learning entries yet")
+            except:
+                st.error("Error reading auto-learning log")
+        else:
+            st.info("No auto_learning_log.jsonl found")
+        
+        # Force clear all learning
+        st.markdown("#### Reset Learning")
+        if st.button("🗑️ Clear All Learning Data", type="secondary"):
+            try:
+                if os.path.exists("override_dict.json"):
+                    os.remove("override_dict.json")
+                if os.path.exists(AUTO_LEARN_FILE):
+                    os.remove(AUTO_LEARN_FILE)
+                if os.path.exists(LOG_FILE):
+                    os.remove(LOG_FILE)
+                st.success("All learning data cleared!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error clearing data: {e}")
 
 # Quick test examples
 with st.expander("🧪 Quick Test Examples"):
