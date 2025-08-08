@@ -44,7 +44,7 @@ class SheetsLearningHistory:
     def initialize_connection(self) -> bool:
         """Initialize Google Sheets connection"""
         try:
-            # First try local credentials file
+            # First try local credentials file (PRIORITY)
             if os.path.exists("google_credentials.json"):
                 scope = [
                     "https://spreadsheets.google.com/feeds",
@@ -54,8 +54,18 @@ class SheetsLearningHistory:
                 self.gc = gspread.authorize(creds)
                 print("✅ Using local google_credentials.json")
             
-            # Fallback to Streamlit secrets
-            elif hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+            # Check for explicit credentials path from constructor
+            elif self.credentials_path and os.path.exists(self.credentials_path):
+                scope = [
+                    "https://spreadsheets.google.com/feeds", 
+                    "https://www.googleapis.com/auth/drive"
+                ]
+                creds = Credentials.from_service_account_file(self.credentials_path, scopes=scope)
+                self.gc = gspread.authorize(creds)
+                print(f"✅ Using credentials from: {self.credentials_path}")
+            
+            # Fallback to Streamlit secrets (for cloud deployment)
+            elif hasattr(st, 'secrets') and hasattr(st.secrets, 'gcp_service_account'):
                 scope = [
                     "https://spreadsheets.google.com/feeds",
                     "https://www.googleapis.com/auth/drive"
@@ -67,6 +77,9 @@ class SheetsLearningHistory:
             
             else:
                 print("❌ No Google credentials found")
+                print("Looking for:")
+                print("  - google_credentials.json in current directory")
+                print("  - Streamlit secrets at ~/.streamlit/secrets.toml")
                 st.warning("Google Sheets credentials not found. Using local storage only.")
                 return False
             
@@ -77,8 +90,7 @@ class SheetsLearningHistory:
             except gspread.SpreadsheetNotFound:
                 self.spreadsheet = self.gc.create(self.spreadsheet_name)
                 print(f"✅ Created new spreadsheet: {self.spreadsheet_name}")
-                # Make it accessible
-                self.spreadsheet.share('', perm_type='anyone', role='reader')
+                st.success(f"Created new spreadsheet: {self.spreadsheet_name}")
             
             # Initialize worksheets
             self._setup_worksheets()
