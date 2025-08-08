@@ -4,8 +4,6 @@ import os
 from datetime import datetime
 from ipa_converter import process_text, reconstruct_sentence, clean_word
 from overrides import update_override_dict
-import gspread
-from google.oauth2.service_account import Credentials
 
 # --- FIXED Google Sheets Setup ---
 def initialize_google_sheets():
@@ -13,6 +11,9 @@ def initialize_google_sheets():
     try:
         # First try Streamlit secrets (for cloud deployment)
         if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+            import gspread
+            from google.oauth2.service_account import Credentials
+            
             credentials_dict = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(
                 credentials_dict,
@@ -27,6 +28,9 @@ def initialize_google_sheets():
         
         # Then try local credentials file (for local development)
         elif os.path.exists("google_credentials.json"):
+            import gspread
+            from google.oauth2.service_account import Credentials
+            
             creds = Credentials.from_service_account_file(
                 "google_credentials.json",
                 scopes=[
@@ -38,19 +42,18 @@ def initialize_google_sheets():
             st.success("✅ Connected to Google Sheets via local credentials")
             return gc
         
-        # Legacy path (remove this problematic code)
-        # elif os.path.exists(os.path.join("secrets", "service_account.json")):
-        #     # This will fail in Streamlit Cloud
-        
         else:
-            st.warning("⚠️ Google Sheets credentials not found. Using local storage only.")
+            st.info("ℹ️ Google Sheets credentials not found. Using local storage only.")
             return None
             
+    except ImportError:
+        st.info("ℹ️ Google Sheets libraries not available. Using local storage only.")
+        return None
     except Exception as e:
-        st.error(f"❌ Google Sheets connection failed: {str(e)}")
+        st.warning(f"⚠️ Google Sheets connection failed: {str(e)}")
         return None
 
-# Initialize Google Sheets
+# Initialize Google Sheets (optional)
 gc = initialize_google_sheets()
 
 # Only try to access sheets if connection successful
@@ -59,21 +62,13 @@ if gc:
     try:
         worksheet = gc.open(SHEET_NAME).sheet1
         first_row = worksheet.row_values(1)
-        st.write("✅ Successfully read the first row from the Google Sheet:")
-        st.write(first_row)
+        st.success(f"✅ Successfully connected to Google Sheet: {SHEET_NAME}")
     except Exception as e:
-        st.error(f"❌ Error accessing Google Sheet: {e}")
+        st.warning(f"⚠️ Error accessing Google Sheet '{SHEET_NAME}': {e}")
+        st.info("💡 Tip: Make sure the sheet exists and is shared with your service account")
+        gc = None  # Disable sheets functionality
 else:
     st.info("ℹ️ Running in local storage mode - Google Sheets features disabled")
-
-SHEET_NAME = "HCE IPA Training Data"
-try:
-    worksheet = gc.open(SHEET_NAME).sheet1
-    first_row = worksheet.row_values(1)
-    st.write("✅ Successfully read the first row from the Google Sheet:")
-    st.write(first_row)
-except Exception as e:
-    st.error(f"❌ Error accessing Google Sheet: {e}")
 
 # --- Config ---
 LOG_FILE = "corrections_log.jsonl"
@@ -428,7 +423,7 @@ if st.session_state.word_results:
         if st.button("🔄 Reset", use_container_width=True):
             st.session_state.word_results = []
             st.session_state.current_text = ""
-            st.experimental_rerun()
+            st.rerun()
     
     with col4:
         if st.button("🗑️ Clear All Data", use_container_width=True):
@@ -439,7 +434,7 @@ if st.session_state.word_results:
                     os.remove(file)
                     removed_count += 1
             st.success(f"Cleared {removed_count} data files!")
-            st.experimental_rerun()
+            st.rerun()
 
 # --- Sidebar ---
 stats = get_learning_stats()
@@ -493,7 +488,7 @@ with st.expander("🧪 Quick Test Examples - Try These to Build Learning Data"):
             if st.button(example, key=f"example_{example}"):
                 st.session_state.current_text = example
                 st.session_state.word_results = process_text(example)
-                st.experimental_rerun()
+                st.rerun()
 
 # --- Help Section ---
 with st.expander("ℹ️ How Auto-Learning Works"):
@@ -520,4 +515,3 @@ with st.expander("ℹ️ How Auto-Learning Works"):
     - Adjust confidence threshold in settings for stricter/looser auto-promotion
     - The sidebar shows your learning progress in real-time
     """)
-
